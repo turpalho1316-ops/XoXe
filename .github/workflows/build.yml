@@ -13,14 +13,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Extract sprite pack
+      - name: Extract assets
         run: |
-          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/assets/kenney
           unzip -q topdown-shooter.zip -d app/src/main/assets/kenney
-          echo "=== PNG files (first 60) ==="
-          find app/src/main/assets/kenney -name "*.png" | head -60
-          echo "=== dirs ==="
-          find app/src/main/assets/kenney -maxdepth 3 -type d | sort | head -40
+          echo "=== assets tree (first 80 files) ==="
+          find app/src/main/assets/kenney -type f | head -80
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'

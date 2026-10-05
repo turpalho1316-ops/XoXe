@@ -5,10 +5,8 @@ import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -45,7 +43,7 @@ public class GameView extends SurfaceView implements Runnable {
     int pWalkPhase = 0;
     int pDamageFlash = 0;
 
-    final int MAX_BOTS = 10;
+    final int MAX_BOTS = 8;
     float[] bx = new float[MAX_BOTS];
     float[] by = new float[MAX_BOTS];
     float[] bhp = new float[MAX_BOTS];
@@ -55,7 +53,7 @@ public class GameView extends SurfaceView implements Runnable {
     int[] bDamageFlash = new int[MAX_BOTS];
     int bCount = 0;
 
-    final int MAX_BUL = 400;
+    final int MAX_BUL = 300;
     float[] bulx = new float[MAX_BUL];
     float[] buly = new float[MAX_BUL];
     float[] bulvx = new float[MAX_BUL];
@@ -63,7 +61,7 @@ public class GameView extends SurfaceView implements Runnable {
     int[] bulFrom = new int[MAX_BUL];
     int bulCount = 0;
 
-    final int MAX_PARTS = 600;
+    final int MAX_PARTS = 300;
     float[] partX = new float[MAX_PARTS];
     float[] partY = new float[MAX_PARTS];
     float[] partVX = new float[MAX_PARTS];
@@ -82,7 +80,7 @@ public class GameView extends SurfaceView implements Runnable {
     Bitmap bStandF, bGunF;
     Bitmap bulletBmp;
     Bitmap muzzleFlash;
-    int pW, pH, bW, bH;
+    int pSpriteH, bSpriteH;
 
     Bitmap bgLayer;
 
@@ -96,7 +94,6 @@ public class GameView extends SurfaceView implements Runnable {
     };
 
     int score = 0;
-    int killsNeeded = 30;
 
     public GameView(Context ctx) {
         super(ctx);
@@ -132,12 +129,15 @@ public class GameView extends SurfaceView implements Runnable {
             if (file.contains("muzzle") && muzzleP == null) muzzleP = p;
         }
 
-        pStand = scale(load(am, pStandP), 140);
-        pGun = scale(load(am, pGunP != null ? pGunP : pStandP), 140);
-        bStand = scale(load(am, bStandP != null ? bStandP : pStandP), 140);
-        bGun = scale(load(am, bGunP != null ? bGunP : bStandP), 140);
-        bulletBmp = scale(load(am, bulletP), 36);
-        muzzleFlash = scale(load(am, muzzleP), 80);
+        // Масштабируем ПО ВЫСОТЕ, чтобы все спрайты были одной высоты
+        pSpriteH = 160;
+        bSpriteH = 160;
+        pStand = scaleH(load(am, pStandP), pSpriteH);
+        pGun = scaleH(load(am, pGunP != null ? pGunP : pStandP), pSpriteH);
+        bStand = scaleH(load(am, bStandP != null ? bStandP : pStandP), bSpriteH);
+        bGun = scaleH(load(am, bGunP != null ? bGunP : bStandP), bSpriteH);
+        bulletBmp = scaleH(load(am, bulletP), 32);
+        muzzleFlash = scaleH(load(am, muzzleP), 90);
 
         tileWall = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888);
         Canvas wc = new Canvas(tileWall);
@@ -169,9 +169,6 @@ public class GameView extends SurfaceView implements Runnable {
         pGunF = flipH(pGun);
         bStandF = flipH(bStand);
         bGunF = flipH(bGun);
-
-        if (pStand != null) { pW = pStand.getWidth(); pH = pStand.getHeight(); }
-        if (bStand != null) { bW = bStand.getWidth(); bH = bStand.getHeight(); }
     }
 
     void collectPngs(AssetManager am, String path, ArrayList<String> out) {
@@ -197,13 +194,13 @@ public class GameView extends SurfaceView implements Runnable {
         } catch (Exception e) { return null; }
     }
 
-    Bitmap scale(Bitmap src, int targetW) {
+    Bitmap scaleH(Bitmap src, int targetH) {
         if (src == null) return null;
         int w = src.getWidth(), h = src.getHeight();
-        if (w == targetW) return src;
-        float r = (float) targetW / w;
-        int nh = Math.max(1, (int) (h * r));
-        Bitmap out = Bitmap.createScaledBitmap(src, targetW, nh, true);
+        if (h == targetH) return src;
+        float r = (float) targetH / h;
+        int nw = Math.max(1, (int) (w * r));
+        Bitmap out = Bitmap.createScaledBitmap(src, nw, targetH, true);
         if (out != src) src.recycle();
         return out;
     }
@@ -249,8 +246,6 @@ public class GameView extends SurfaceView implements Runnable {
                 partCount--;
                 i--;
             }
-        }
-    }
     void startGame() {
         px = WW / 2; py = WH / 2;
         pvx = 0; pvy = 0;
@@ -268,7 +263,7 @@ public class GameView extends SurfaceView implements Runnable {
     }
 
     void spawnWave() {
-        int n = 3 + Math.min(5, score / 6);
+        int n = 3 + Math.min(4, score / 8);
         bCount = Math.min(n, MAX_BOTS);
         for (int i = 0; i < bCount; i++) {
             float ang = (float) (i * 2 * Math.PI / bCount);
@@ -368,6 +363,7 @@ public class GameView extends SurfaceView implements Runnable {
         // Плавная камера с запаздыванием
         camX += (px - camX) * 0.12f;
         camY += (py - camY) * 0.12f;
+        clampCamera();
 
         if (pShootCD > 0) pShootCD--;
 
@@ -389,10 +385,9 @@ public class GameView extends SurfaceView implements Runnable {
                 by[i] -= dy / dist * 110 * dt;
                 bMoving = true;
             }
-            if (Math.abs(dx) > 5) bFacing[i] = dx < 0 ? 1 : -1;
+            if (Math.abs(dx) > 5) bFacing[i] = dx > 0 ? 1 : -1;
             if (bMoving) bWalkPhase[i]++; else bWalkPhase[i] = 0;
 
-            // Боты не выходят за карту
             if (bx[i] < 70) bx[i] = 70;
             if (bx[i] > WW - 70) bx[i] = WW - 70;
             if (by[i] < 70) by[i] = 70;
@@ -469,6 +464,15 @@ public class GameView extends SurfaceView implements Runnable {
         updateParticles(dt);
     }
 
+    void clampCamera() {
+        float halfW = W / 2f;
+        float halfH = H / (2f * Y_TILT);
+        if (camX - halfW < 0) camX = halfW;
+        if (camX + halfW > WW) camX = WW - halfW;
+        if (camY - halfH < 0) camY = halfH;
+        if (camY + halfH > WH) camY = WH - halfH;
+    }
+
     void addBullet(float x, float y, float vx, float vy, int from) {
         if (bulCount >= MAX_BUL) return;
         bulx[bulCount] = x; buly[bulCount] = y;
@@ -484,7 +488,6 @@ public class GameView extends SurfaceView implements Runnable {
         c.drawColor(0xFF060A14);
 
         if (screen == 0) {
-            // Параллакс-фон меню
             long t = System.currentTimeMillis();
             float bob = (float) Math.sin(t * 0.001) * 8;
             paint.setAlpha(60);
@@ -525,8 +528,8 @@ public class GameView extends SurfaceView implements Runnable {
             return;
         }
 
-        // Параллакс дальний фон
-        paint.setAlpha(80);
+        // Параллакс
+        paint.setAlpha(70);
         float bgOffX = -camX * 0.15f;
         float bgOffY = -camY * 0.15f * Y_TILT;
         for (int gx = -512; gx < W + 512; gx += 512) {
@@ -540,11 +543,10 @@ public class GameView extends SurfaceView implements Runnable {
         c.translate(W / 2f - camX + shakeX, H / 2f - camY + shakeY);
         c.scale(1f, Y_TILT);
 
-        // Пол из тайлов
         int startTX = (int) ((camX - W) / tileSize) - 1;
         int endTX = (int) ((camX + W) / tileSize) + 1;
-        int startTY = (int) ((camY - H) / tileSize) - 1;
-        int endTY = (int) ((camY + H) / tileSize) + 1;
+        int startTY = (int) ((camY - H / Y_TILT) / tileSize) - 1;
+        int endTY = (int) ((camY + H / Y_TILT) / tileSize) + 1;
         if (startTX < 0) startTX = 0;
         if (startTY < 0) startTY = 0;
         if (endTX > WW / tileSize) endTX = (int) (WW / tileSize);
@@ -555,14 +557,12 @@ public class GameView extends SurfaceView implements Runnable {
             }
         }
 
-        // Неоновая рамка арены
         paint.setColor(0xFF00E5FF);
         paint.setStrokeWidth(8);
         paint.setStyle(Paint.Style.STROKE);
         c.drawRect(0, 0, WW, WH, paint);
         paint.setStyle(Paint.Style.FILL);
 
-        // Стены из тайлов
         for (float[] w : walls) {
             int tx0 = (int) (w[0] / tileSize);
             int ty0 = (int) (w[1] / tileSize);
@@ -582,7 +582,6 @@ public class GameView extends SurfaceView implements Runnable {
 
         c.restore();
 
-        // Пули
         for (int i = 0; i < bulCount; i++) {
             float bxp = sx(bulx[i]);
             float byp = sy(buly[i]);
@@ -594,18 +593,16 @@ public class GameView extends SurfaceView implements Runnable {
                 c.restore();
             } else {
                 int col = bulFrom[i] == 0 ? 0xFF00E5FF : 0xFFFF3B6B;
-                paint.setColor(col & 0x00FFFFFF | 0x88000000);
+                paint.setColor(0x88000000 | col);
                 c.drawCircle(bxp, byp, 20, paint);
                 paint.setColor(col);
                 c.drawCircle(bxp, byp, 10, paint);
             }
         }
 
-        // Тени
         for (int i = 0; i < bCount; i++) drawShadow(c, sx(bx[i]), sy(by[i]), 45, 20);
         drawShadow(c, sx(px), sy(py), 50, 22);
 
-        // Частицы (поверх теней, но под персонажами)
         for (int i = 0; i < partCount; i++) {
             int a = (int) (255 * partLife[i]);
             if (a < 0) a = 0;
@@ -616,15 +613,15 @@ public class GameView extends SurfaceView implements Runnable {
             c.drawCircle(sx(partX[i]), sy(partY[i]), ps, paint);
         }
 
-        // Боты
         for (int i = 0; i < bCount; i++) {
             float bx2 = sx(bx[i]);
             float by2 = sy(by[i]);
             float bob = bWalkPhase[i] > 0 ? (float) Math.sin(bWalkPhase[i] * 0.28) * 5f : 0;
             if (bStand != null) {
+                // ИСПРАВЛЕНО: спрайты Kenney смотрят вправо, поэтому при facing=1 берём оригинал
                 Bitmap bm;
-                if (bShootVisual[i] > 0) bm = bFacing[i] == 1 ? bGunF : bGun;
-                else bm = bFacing[i] == 1 ? bStandF : bStand;
+                if (bShootVisual[i] > 0) bm = bFacing[i] == 1 ? bGun : bGunF;
+                else bm = bFacing[i] == 1 ? bStand : bStandF;
                 if (bm == null) bm = bStand;
                 if (bm != null) {
                     if (bDamageFlash[i] > 0) {
@@ -641,7 +638,6 @@ public class GameView extends SurfaceView implements Runnable {
                 paint.setColor(0xFFFF3B6B);
                 c.drawCircle(bx2, by2, 26, paint);
             }
-            // HP бар с градиентом
             float hbw = 55;
             float hby = by2 - (bStand != null ? bStand.getHeight() : 80) - 10;
             paint.setColor(0xFF1A0F1A);
@@ -650,27 +646,28 @@ public class GameView extends SurfaceView implements Runnable {
             c.drawRect(bx2 - hbw, hby, bx2 + hbw, hby + 10, paint);
             float ratio = Math.max(0, bhp[i] / (60f + score * 2f));
             if (ratio > 1f) ratio = 1f;
-            paint.setShader(new LinearGradient(bx2 - hbw, 0, bx2 + hbw, 0,
-                    0xFF00FF88, 0xFFFFAA00, Shader.TileMode.CLAMP));
+            // Без градиента - берём цвет по значению
+            int hpCol;
+            if (ratio > 0.6f) hpCol = 0xFF00FF88;
+            else if (ratio > 0.3f) hpCol = 0xFFFFAA00;
+            else hpCol = 0xFFFF3B3B;
+            paint.setColor(hpCol);
             c.drawRect(bx2 - hbw, hby, bx2 - hbw + 110 * ratio, hby + 10, paint);
-            paint.setShader(null);
         }
 
-        // Игрок
         float pxs = sx(px), pys = sy(py);
         float pBob = pWalkPhase > 0 ? (float) Math.sin(pWalkPhase * 0.28) * 5f : 0;
 
-        // Вспышка выстрела
         if (pShootVisual > 0 && muzzleFlash != null) {
-            float fx = pxs + (pFacing == 1 ? 55 : -55);
+            float fx = pxs + (pFacing == 1 ? 60 : -60);
             c.drawBitmap(muzzleFlash, fx - muzzleFlash.getWidth() / 2f,
-                    pys - 80, paint);
+                    pys - 100, paint);
         }
 
         if (pStand != null) {
             Bitmap bm;
-            if (pShootVisual > 0) bm = pFacing == 1 ? pGunF : pGun;
-            else bm = pFacing == 1 ? pStandF : pStand;
+            if (pShootVisual > 0) bm = pFacing == 1 ? pGun : pGunF;
+            else bm = pFacing == 1 ? pStand : pStandF;
             if (bm == null) bm = pStand;
             if (bm != null) {
                 if (pDamageFlash > 0) {
@@ -688,7 +685,6 @@ public class GameView extends SurfaceView implements Runnable {
             c.drawCircle(pxs, pys, 26, paint);
         }
 
-        // Джойстик
         if (joyId != -1) {
             paint.setColor(0x22FFFFFF);
             c.drawCircle(joyCX, joyCY, joyR, paint);
@@ -700,22 +696,24 @@ public class GameView extends SurfaceView implements Runnable {
             c.drawCircle(joyCX, joyCY, joyR * 0.35f, paint);
         }
 
-        // HUD: HP бар с градиентом
+        // HUD без градиента
         paint.setColor(0x88000000);
         c.drawRect(28, 28, W - 28, 74, paint);
         paint.setColor(0xFF2A2A2A);
         c.drawRect(30, 30, W - 30, 72, paint);
-        paint.setShader(new LinearGradient(30, 0, W - 30, 0,
-                0xFF00FF88, 0xFF00E5FF, Shader.TileMode.CLAMP));
-        c.drawRect(30, 30, 30 + (W - 60) * (php / PMAX), 72, paint);
-        paint.setShader(null);
+        float hpRatio = php / PMAX;
+        int hudCol;
+        if (hpRatio > 0.6f) hudCol = 0xFF00FF88;
+        else if (hpRatio > 0.3f) hudCol = 0xFFFFAA00;
+        else hudCol = 0xFFFF3B3B;
+        paint.setColor(hudCol);
+        c.drawRect(30, 30, 30 + (W - 60) * hpRatio, 72, paint);
         paint.setColor(0xFF00E5FF);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(3);
         c.drawRect(30, 30, W - 30, 72, paint);
         paint.setStyle(Paint.Style.FILL);
 
-        // Score с тенью
         paint.setTextAlign(Paint.Align.RIGHT);
         paint.setTextSize(64);
         paint.setColor(0x88000000);
@@ -788,9 +786,6 @@ public class GameView extends SurfaceView implements Runnable {
         spawnParticles(px + dx / d * 55, py + dy / d * 55, 5, 0xAAFFFFFF, 180, 3);
         pShootCD = 11;
         pShootVisual = 8;
-        // лёгкий откат
-        pvx -= dx / d * 30;
-        pvy -= dy / d * 30;
     }
 
     public void resume() {
@@ -813,3 +808,5 @@ public class GameView extends SurfaceView implements Runnable {
         joyR = Math.min(W, H) * 0.16f;
     }
 }
+        }
+    }

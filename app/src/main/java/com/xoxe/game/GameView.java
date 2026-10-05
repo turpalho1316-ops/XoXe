@@ -1,14 +1,21 @@
 package com.xoxe.game;
 
 import android.content.Context;
+import android.content.res.AssetManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import java.io.InputStream;
+import java.util.ArrayList;
 
 public class GameView extends SurfaceView implements Runnable {
     static final long NS_UPDATE = 16_666_666L;
+    static final float Y_TILT = 0.7f;
 
     Thread thread;
     volatile boolean running;
@@ -27,11 +34,14 @@ public class GameView extends SurfaceView implements Runnable {
     float px, py, pvx, pvy, php;
     final float PMAX = 100f;
     int pShootCD = 0;
+    int pFacing = 1;
+    float pAimX = 1, pAimY = 0;
 
     final int MAX_BOTS = 6;
     float[] bx = new float[MAX_BOTS];
     float[] by = new float[MAX_BOTS];
     float[] bhp = new float[MAX_BOTS];
+    int[] bFacing = new int[MAX_BOTS];
     int bCount = 0;
 
     final int MAX_BUL = 200;
@@ -52,10 +62,104 @@ public class GameView extends SurfaceView implements Runnable {
 
     int score = 0;
 
+    Bitmap playerBmp, botBmp, bulletBmp;
+    Bitmap playerBmpFlipped, botBmpFlipped;
+    int playerBmpW, playerBmpH, botBmpW, botBmpH;
+
     public GameView(Context ctx) {
         super(ctx);
         holder = getHolder();
         paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setFilterBitmap(true);
+        loadSprites(ctx);
+    }
+
+    void loadSprites(Context ctx) {
+        AssetManager am = ctx.getAssets();
+        ArrayList<String> all = new ArrayList<>();
+        collectPngs(am, "kenney", all);
+
+        String playerPath = null;
+        String botPath = null;
+        String bulletPath = null;
+
+        for (String p : all) {
+            String low = p.toLowerCase();
+            String[] parts = low.split("/");
+            String file = parts[parts.length - 1];
+            if (playerPath == null && low.contains("soldier") && file.contains("stand")) {
+                playerPath = p;
+            }
+            if (botPath == null && low.contains("zombie") && file.contains("stand")) {
+                botPath = p;
+            }
+            if (botPath == null && low.contains("robot") && file.contains("stand")) {
+                botPath = p;
+            }
+            if (bulletPath == null && file.contains("bullet")) {
+                bulletPath = p;
+            }
+        }
+
+        playerBmp = scale(load(am, playerPath), 96);
+        botBmp = scale(load(am, botPath), 96);
+        bulletBmp = scale(load(am, bulletPath), 24);
+
+        if (playerBmp != null) {
+            playerBmpW = playerBmp.getWidth();
+            playerBmpH = playerBmp.getHeight();
+            playerBmpFlipped = flipH(playerBmp);
+        }
+        if (botBmp != null) {
+            botBmpW = botBmp.getWidth();
+            botBmpH = botBmp.getHeight();
+            botBmpFlipped = flipH(botBmp);
+        }
+    }
+
+    void collectPngs(AssetManager am, String path, ArrayList<String> out) {
+        try {
+            String[] kids = am.list(path);
+            if (kids == null || kids.length == 0) {
+                if (path.toLowerCase().endsWith(".png")) out.add(path);
+                return;
+            }
+            for (String k : kids) {
+                String full = path + "/" + k;
+                String[] sub = am.list(full);
+                if (sub != null && sub.length > 0) {
+                    collectPngs(am, full, out);
+                } else {
+                    if (full.toLowerCase().endsWith(".png")) out.add(full);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    Bitmap load(AssetManager am, String path) {
+        if (path == null) return null;
+        try (InputStream is = am.open(path)) {
+            return BitmapFactory.decodeStream(is);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    Bitmap scale(Bitmap src, int targetW) {
+        if (src == null) return null;
+        int w = src.getWidth(), h = src.getHeight();
+        if (w == targetW) return src;
+        float r = (float) targetW / w;
+        int nh = Math.max(1, (int) (h * r));
+        Bitmap out = Bitmap.createScaledBitmap(src, targetW, nh, true);
+        if (out != src) src.recycle();
+        return out;
+    }
+
+    Bitmap flipH(Bitmap src) {
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.preScale(-1, 1);
+        return Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), m, false);
     }
 
     void startGame() {
@@ -71,10 +175,11 @@ public class GameView extends SurfaceView implements Runnable {
     void spawnWave() {
         bCount = 4;
         for (int i = 0; i < bCount; i++) {
-            float ang = (float)(i * 2 * Math.PI / bCount);
-            bx[i] = WW / 2 + (float)Math.cos(ang) * 700;
-            by[i] = WH / 2 + (float)Math.sin(ang) * 700;
+            float ang = (float) (i * 2 * Math.PI / bCount);
+            bx[i] = WW / 2 + (float) Math.cos(ang) * 700;
+            by[i] = WH / 2 + (float) Math.sin(ang) * 700;
             bhp[i] = 60;
+            bFacing[i] = 1;
         }
     }
 
@@ -108,12 +213,13 @@ public class GameView extends SurfaceView implements Runnable {
 
         float jx = joyX - joyCX;
         float jy = joyY - joyCY;
-        float jd = (float)Math.sqrt(jx * jx + jy * jy);
+        float jd = (float) Math.sqrt(jx * jx + jy * jy);
         float sp = 350f;
         if (jd > joyR) { jx = jx / jd * joyR; jy = jy / jd * joyR; jd = joyR; }
         if (jd > 10) {
             pvx = jx / joyR * sp;
             pvy = jy / joyR * sp;
+            if (Math.abs(pvx) > 5) pFacing = pvx > 0 ? 1 : -1;
         } else {
             pvx *= 0.85f;
             pvy *= 0.85f;
@@ -145,7 +251,7 @@ public class GameView extends SurfaceView implements Runnable {
         for (int i = 0; i < bCount; i++) {
             float dx = px - bx[i];
             float dy = py - by[i];
-            float dist = (float)Math.sqrt(dx * dx + dy * dy);
+            float dist = (float) Math.sqrt(dx * dx + dy * dy);
             if (dist > 200) {
                 bx[i] += dx / dist * 130 * dt;
                 by[i] += dy / dist * 130 * dt;
@@ -153,6 +259,7 @@ public class GameView extends SurfaceView implements Runnable {
                 bx[i] -= dx / dist * 100 * dt;
                 by[i] -= dy / dist * 100 * dt;
             }
+            if (Math.abs(dx) > 5) bFacing[i] = dx < 0 ? 1 : -1;
             if (Math.random() < 0.015 && dist < 700 && dist > 1) {
                 addBullet(bx[i], by[i], dx / dist * 500, dy / dist * 500, 1);
             }
@@ -178,6 +285,7 @@ public class GameView extends SurfaceView implements Runnable {
                             bx[j] = bx[bCount - 1];
                             by[j] = by[bCount - 1];
                             bhp[j] = bhp[bCount - 1];
+                            bFacing[j] = bFacing[bCount - 1];
                             bCount--;
                             score++;
                             j--;
@@ -213,6 +321,9 @@ public class GameView extends SurfaceView implements Runnable {
         bulCount++;
     }
 
+    float sx(float wx) { return W / 2f + (wx - camX); }
+    float sy(float wy) { return H / 2f + (wy - camY) * Y_TILT; }
+
     void render(Canvas c) {
         c.drawColor(0xFF0A0E1A);
 
@@ -240,6 +351,7 @@ public class GameView extends SurfaceView implements Runnable {
 
         c.save();
         c.translate(W / 2f - camX, H / 2f - camY);
+        c.scale(1f, Y_TILT);
 
         paint.setColor(0xFF141A2E);
         paint.setStrokeWidth(2);
@@ -262,39 +374,64 @@ public class GameView extends SurfaceView implements Runnable {
             paint.setStyle(Paint.Style.FILL);
         }
 
-        for (int i = 0; i < bCount; i++) {
-            paint.setColor(0x44FF3B6B);
-            c.drawCircle(bx[i], by[i], 60, paint);
-            paint.setColor(0xFFFF3B6B);
-            c.drawCircle(bx[i], by[i], 38, paint);
-            paint.setColor(0xFF2A2A2A);
-            c.drawRect(bx[i] - 40, by[i] - 58, bx[i] + 40, by[i] - 48, paint);
-            paint.setColor(0xFF00FF88);
-            c.drawRect(bx[i] - 40, by[i] - 58, bx[i] - 40 + 80 * (bhp[i] / 60f), by[i] - 48, paint);
-        }
+        c.restore();
 
         for (int i = 0; i < bulCount; i++) {
-            if (bulFrom[i] == 0) {
+            float bxp = sx(bulx[i]);
+            float byp = sy(buly[i]);
+            if (bulletBmp != null) {
+                c.drawBitmap(bulletBmp, bxp - bulletBmp.getWidth() / 2f,
+                        byp - bulletBmp.getHeight() / 2f, paint);
+            } else if (bulFrom[i] == 0) {
                 paint.setColor(0x8800E5FF);
-                c.drawCircle(bulx[i], buly[i], 18, paint);
+                c.drawCircle(bxp, byp, 18, paint);
                 paint.setColor(0xFFAAFFFF);
-                c.drawCircle(bulx[i], buly[i], 9, paint);
+                c.drawCircle(bxp, byp, 9, paint);
             } else {
                 paint.setColor(0x88FF3B6B);
-                c.drawCircle(bulx[i], buly[i], 18, paint);
+                c.drawCircle(bxp, byp, 18, paint);
                 paint.setColor(0xFFFFAAAA);
-                c.drawCircle(bulx[i], buly[i], 9, paint);
+                c.drawCircle(bxp, byp, 9, paint);
             }
         }
 
-        paint.setColor(0x4400E5FF);
-        c.drawCircle(px, py, 70, paint);
-        paint.setColor(0xFF00E5FF);
-        c.drawCircle(px, py, 42, paint);
-        paint.setColor(0xFFFFFFFF);
-        c.drawCircle(px, py, 18, paint);
+        for (int i = 0; i < bCount; i++) {
+            drawShadow(c, sx(bx[i]), sy(by[i]), 30, 14);
+        }
+        drawShadow(c, sx(px), sy(py), 34, 16);
 
-        c.restore();
+        for (int i = 0; i < bCount; i++) {
+            float bx2 = sx(bx[i]);
+            float by2 = sy(by[i]);
+            if (botBmp != null) {
+                Bitmap bm = bFacing[i] == 1 ? botBmpFlipped : botBmp;
+                c.drawBitmap(bm, bx2 - botBmpW / 2f, by2 - botBmpH + 8, paint);
+            } else {
+                paint.setColor(0x44FF3B6B);
+                c.drawCircle(bx2, by2, 40, paint);
+                paint.setColor(0xFFFF3B6B);
+                c.drawCircle(bx2, by2, 26, paint);
+            }
+            float hbw = 50;
+            paint.setColor(0xFF2A2A2A);
+            c.drawRect(bx2 - hbw, by2 - (botBmp != null ? botBmpH : 70) - 14,
+                    bx2 + hbw, by2 - (botBmp != null ? botBmpH : 70) - 4, paint);
+            paint.setColor(0xFF00FF88);
+            c.drawRect(bx2 - hbw, by2 - (botBmp != null ? botBmpH : 70) - 14,
+                    bx2 - hbw + 100 * (bhp[i] / 60f),
+                    by2 - (botBmp != null ? botBmpH : 70) - 4, paint);
+        }
+
+        float pxs = sx(px), pys = sy(py);
+        if (playerBmp != null) {
+            Bitmap bm = pFacing == 1 ? playerBmpFlipped : playerBmp;
+            c.drawBitmap(bm, pxs - playerBmpW / 2f, pys - playerBmpH + 10, paint);
+        } else {
+            paint.setColor(0x4400E5FF);
+            c.drawCircle(pxs, pys, 40, paint);
+            paint.setColor(0xFF00E5FF);
+            c.drawCircle(pxs, pys, 26, paint);
+        }
 
         if (joyId != -1) {
             paint.setColor(0x22FFFFFF);
@@ -315,6 +452,12 @@ public class GameView extends SurfaceView implements Runnable {
         paint.setTextSize(60);
         c.drawText("Score: " + score, W - 40, 160, paint);
         paint.setTextAlign(Paint.Align.LEFT);
+    }
+
+    void drawShadow(Canvas c, float x, float y, float rx, float ry) {
+        paint.setColor(0x55000000);
+        RectF r = new RectF(x - rx, y - ry, x + rx, y + ry);
+        c.drawOval(r, paint);
     }
 
     @Override
@@ -366,8 +509,8 @@ public class GameView extends SurfaceView implements Runnable {
         }
         float dx, dy;
         if (bi >= 0) { dx = bx[bi] - px; dy = by[bi] - py; }
-        else { dx = 1; dy = 0; }
-        float d = (float)Math.sqrt(dx * dx + dy * dy);
+        else { dx = pFacing; dy = 0; }
+        float d = (float) Math.sqrt(dx * dx + dy * dy);
         if (d < 1) d = 1;
         float sp = 900;
         addBullet(px + dx / d * 50, py + dy / d * 50, dx / d * sp, dy / d * sp, 0);
